@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Clasificador — Taller IA sin internet</title>
 <style>
-  :root { --rojo:#FF0000; --negro:#111; }
+  :root { --rojo:#FF0000; }
   * { box-sizing: border-box; }
   body {
     margin:0; padding:20px; font-family:Arial, Helvetica, sans-serif;
@@ -14,39 +14,38 @@
   h1 { font-size:20px; margin:0 0 4px; }
   p.sub { color:#999; font-size:13px; margin:0 0 20px; }
 
-  .controles { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-bottom:20px; }
-  button {
-    font-family:inherit; font-size:15px; font-weight:bold; padding:12px 22px;
-    border:none; border-radius:8px; cursor:pointer; background:var(--rojo); color:#fff;
-  }
-  button.sec { background:#333; }
-  button:disabled { opacity:.4; cursor:default; }
-
-  #webcam-container canvas {
-    width:100%; max-width:380px; height:auto;
-    border-radius:12px; display:block; margin:0 auto; background:#000;
-  }
-
-  #label-container { max-width:380px; margin:18px auto 0; text-align:left; }
-  .fila {
-    display:flex; align-items:center; gap:10px;
-    padding:7px 0; font-size:14px;
-  }
-  .nombre { width:110px; flex-shrink:0; }
-  .barra { flex:1; height:9px; background:#2a2a2a; border-radius:5px; overflow:hidden; }
-  .relleno { height:100%; width:0%; background:var(--rojo); transition:width .12s linear; }
-  .pct { width:46px; text-align:right; color:#aaa; font-size:12px; }
-
-  #estado { margin-top:16px; font-size:13px; color:#999; min-height:20px; }
-  #estado.error { color:var(--rojo); }
-
-  #setup { max-width:420px; margin:0 auto 22px; }
+  #setup { max-width:420px; margin:0 auto 18px; }
   #setup label { display:block; font-size:13px; color:#999; margin-bottom:8px; text-align:left; }
   #url-modelo {
     width:100%; padding:12px; font-family:inherit; font-size:14px;
     border:1px solid #333; border-radius:8px; background:#1c1c1c; color:#fff;
   }
   #url-modelo::placeholder { color:#555; }
+
+  .controles { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-bottom:18px; }
+  .btn {
+    font-family:inherit; font-size:15px; font-weight:bold; padding:12px 20px;
+    border:none; border-radius:8px; cursor:pointer; background:var(--rojo); color:#fff;
+    display:inline-block; line-height:1.2;
+  }
+  .btn.sec { background:#333; }
+  .btn:disabled { opacity:.4; cursor:default; }
+  #archivo { display:none; }
+
+  #media-container canvas, #media-container img {
+    width:100%; max-width:380px; height:auto;
+    border-radius:12px; display:block; margin:0 auto; background:#000;
+  }
+
+  #label-container { max-width:380px; margin:18px auto 0; text-align:left; }
+  .fila { display:flex; align-items:center; gap:10px; padding:7px 0; font-size:14px; }
+  .nombre { width:110px; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .barra { flex:1; height:9px; background:#2a2a2a; border-radius:5px; overflow:hidden; }
+  .relleno { height:100%; width:0%; background:var(--rojo); transition:width .12s linear; }
+  .pct { width:46px; text-align:right; color:#aaa; font-size:12px; }
+
+  #estado { margin-top:16px; font-size:13px; color:#999; min-height:20px; }
+  #estado.error { color:var(--rojo); }
   .oculto { display:none !important; }
 </style>
 </head>
@@ -62,30 +61,41 @@
 </div>
 
 <div class="controles">
-  <button id="btn-trasera" onclick="init('environment')">Cámara trasera</button>
-  <button id="btn-frontal" class="sec" onclick="init('user')">Cámara frontal</button>
+  <button class="btn" onclick="iniciarCamara('environment')">Cámara trasera</button>
+  <button class="btn sec" onclick="iniciarCamara('user')">Cámara frontal</button>
+  <label class="btn sec" for="archivo">Subir imagen</label>
+  <input id="archivo" type="file" accept="image/*" onchange="cargarImagen(event)">
 </div>
 
-<div id="webcam-container"></div>
+<div id="media-container"></div>
 <div id="label-container"></div>
 <div id="estado"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
 <script>
-// Opcional: enlace por defecto. Sirve como modelo de respaldo durante el taller.
+// Enlace por defecto. Sirve como modelo de respaldo durante el taller.
 const MODELO_POR_DEFECTO = "https://teachablemachine.withgoogle.com/models/SA8B4Xba_/";
+
+const LADO = 400; // lienzo cuadrado, igual que el encuadre con el que entrena Teachable Machine
 
 let model, webcam, maxPredictions;
 let corriendo = false;
 let urlCargada = null;
-const estado = document.getElementById("estado");
-const campoUrl = document.getElementById("url-modelo");
 
-// Permite compartir un modelo ya listo por enlace o por QR:
+const estado    = document.getElementById("estado");
+const campoUrl  = document.getElementById("url-modelo");
+const contMedia = document.getElementById("media-container");
+
+// Permite compartir un modelo listo por enlace o por QR:
 //   mipagina.github.io/?modelo=https://teachablemachine.withgoogle.com/models/XXXX/
 const paramModelo = new URLSearchParams(location.search).get("modelo");
 campoUrl.value = paramModelo || MODELO_POR_DEFECTO;
+
+function msg(texto, esError) {
+  estado.textContent = texto;
+  estado.className = esError ? "error" : "";
+}
 
 // Teachable Machine entrega el enlace con barra final; si falta, la agregamos.
 function normalizar(u) {
@@ -94,75 +104,127 @@ function normalizar(u) {
   return u.endsWith("/") ? u : u + "/";
 }
 
-function msg(texto, esError) {
-  estado.textContent = texto;
-  estado.className = esError ? "error" : "";
+// Carga el modelo solo si hace falta, o si cambió el enlace.
+async function asegurarModelo() {
+  const url = normalizar(campoUrl.value);
+  if (!url.startsWith("https://teachablemachine.withgoogle.com/models/")) {
+    throw new Error("ENLACE_INVALIDO");
+  }
+  if (!model || url !== urlCargada) {
+    msg("Cargando el modelo…");
+    model = await tmImage.load(url + "model.json", url + "metadata.json");
+    maxPredictions = model.getTotalClasses();
+    urlCargada = url;
+    construirEtiquetas();
+  }
 }
 
-async function init(facingMode) {
+// Detiene la cámara y limpia el área de imagen antes de cambiar de modo.
+async function detenerTodo() {
+  corriendo = false;
+  if (webcam) {
+    try { await webcam.stop(); } catch (e) { /* ya estaba detenida */ }
+    webcam = null;
+  }
+  contMedia.innerHTML = "";
+}
+
+// ─────────────────────────── MODO CÁMARA ───────────────────────────
+async function iniciarCamara(facingMode) {
   try {
-    document.getElementById("btn-trasera").disabled = true;
-    document.getElementById("btn-frontal").disabled = true;
-
-    // Si ya había una cámara activa, se detiene antes de abrir la otra.
-    if (webcam) {
-      corriendo = false;
-      await webcam.stop();
-      document.getElementById("webcam-container").innerHTML = "";
-    }
-
-    const url = normalizar(campoUrl.value);
-    if (!url.startsWith("https://teachablemachine.withgoogle.com/models/")) {
-      msg("Ese no parece un enlace de Teachable Machine. Revisa que lo hayas pegado completo.", true);
-      return;
-    }
-
-    // Solo se recarga el modelo si cambió el enlace.
-    if (!model || url !== urlCargada) {
-      msg("Cargando el modelo…");
-      model = await tmImage.load(url + "model.json", url + "metadata.json");
-      maxPredictions = model.getTotalClasses();
-      urlCargada = url;
-      construirEtiquetas();
-    }
+    await detenerTodo();
+    await asegurarModelo();
 
     msg("Abriendo la cámara…");
 
-    // flip solo tiene sentido en la cámara frontal: invertirla imita un espejo.
+    // El espejo solo tiene sentido en la cámara frontal.
     const flip = (facingMode === "user");
+    webcam = new tmImage.Webcam(LADO, LADO, flip);
 
-    // 400x400 en lugar de 200x200: el modelo trabaja igual y se ve mucho mejor en celular.
-    webcam = new tmImage.Webcam(400, 400, flip);
-
-    // Aquí está el cambio clave. Sin "exact" es una preferencia, no una exigencia:
-    // en un celular toma la trasera, y en un portátil sin trasera no falla.
+    // Sin "exact" es una preferencia, no una exigencia: en celular toma la
+    // trasera, y en un portátil que no tiene trasera no falla.
     await webcam.setup({ facingMode: facingMode });
-
     await webcam.play();
-    document.getElementById("webcam-container").appendChild(webcam.canvas);
+    contMedia.appendChild(webcam.canvas);
 
     corriendo = true;
     document.getElementById("setup").classList.add("oculto");
     msg("Funcionando. Ya puedes activar el modo avión.");
-    window.requestAnimationFrame(loop);
+    window.requestAnimationFrame(bucle);
 
   } catch (e) {
-    document.getElementById("setup").classList.remove("oculto");
-    if (e && e.name === "NotAllowedError") {
-      msg("Permiso de cámara denegado. Habilítalo en el candado de la barra de direcciones.", true);
-    } else if (e && e.name === "NotFoundError") {
-      msg("No se encontró ninguna cámara en este dispositivo.", true);
-    } else if (location.protocol !== "https:" && location.hostname !== "localhost") {
-      msg("La cámara requiere HTTPS. Abre esta página con https://", true);
-    } else {
-      msg("No fue posible iniciar. Revisa el enlace y tu conexión. " + (e && e.message ? e.message : ""), true);
-    }
-  } finally {
-    document.getElementById("btn-trasera").disabled = false;
-    document.getElementById("btn-frontal").disabled = false;
+    manejarError(e);
   }
 }
 
+async function bucle() {
+  if (!corriendo || !webcam) return;
+  webcam.update();
+  await clasificar(webcam.canvas);
+  window.requestAnimationFrame(bucle);
+}
+
+// ─────────────────────────── MODO IMAGEN ───────────────────────────
+async function cargarImagen(evento) {
+  const archivo = evento.target.files && evento.target.files[0];
+  evento.target.value = ""; // permite volver a elegir la misma foto
+  if (!archivo) return;
+
+  try {
+    await detenerTodo();
+    await asegurarModelo();
+
+    msg("Procesando la imagen…");
+    const bitmap = await leerComoBitmap(archivo);
+    const lienzo = recortarCuadrado(bitmap);
+    contMedia.appendChild(lienzo);
+
+    document.getElementById("setup").classList.add("oculto");
+    await clasificar(lienzo);
+    msg("Listo. Puedes subir otra imagen o volver a la cámara.");
+
+  } catch (e) {
+    manejarError(e);
+  }
+}
+
+// createImageBitmap respeta la orientación EXIF; si el navegador no lo admite,
+// se usa un <img>, que en los navegadores actuales también la respeta.
+async function leerComoBitmap(archivo) {
+  if (window.createImageBitmap) {
+    try {
+      return await createImageBitmap(archivo, { imageOrientation: "from-image" });
+    } catch (e) {
+      try { return await createImageBitmap(archivo); } catch (e2) { /* sigue abajo */ }
+    }
+  }
+  return await new Promise((resolver, rechazar) => {
+    const img = new Image();
+    img.onload  = () => resolver(img);
+    img.onerror = () => rechazar(new Error("IMAGEN_ILEGIBLE"));
+    img.src = URL.createObjectURL(archivo);
+  });
+}
+
+// Recorta al centro en cuadrado. Sin esto, una foto rectangular se deformaría
+// al ajustarse al modelo y la precisión cae, porque Teachable Machine entrena
+// con fotogramas cuadrados de la webcam.
+function recortarCuadrado(origen) {
+  const ancho = origen.width  || origen.naturalWidth;
+  const alto  = origen.height || origen.naturalHeight;
+  const lado  = Math.min(ancho, alto);
+  const sx = (ancho - lado) / 2;
+  const sy = (alto  - lado) / 2;
+
+  const lienzo = document.createElement("canvas");
+  lienzo.width = LADO;
+  lienzo.height = LADO;
+  const ctx = lienzo.getContext("2d");
+  ctx.drawImage(origen, sx, sy, lado, lado, 0, 0, LADO, LADO);
+  return lienzo;
+}
+
+// ─────────────────────────── COMÚN ───────────────────────────
 function construirEtiquetas() {
   const cont = document.getElementById("label-container");
   cont.innerHTML = "";
@@ -177,21 +239,35 @@ function construirEtiquetas() {
   }
 }
 
-async function loop() {
-  if (!corriendo) return;
-  webcam.update();
-  await predict();
-  window.requestAnimationFrame(loop);
-}
-
-async function predict() {
-  const prediction = await model.predict(webcam.canvas);
+// predict acepta una imagen, un vídeo o un lienzo; los dos modos terminan aquí.
+async function clasificar(fuente) {
+  const prediccion = await model.predict(fuente);
   const filas = document.getElementById("label-container").children;
   for (let i = 0; i < maxPredictions; i++) {
-    const pct = prediction[i].probability * 100;
-    filas[i].querySelector(".nombre").textContent  = prediction[i].className;
+    const pct = prediccion[i].probability * 100;
+    filas[i].querySelector(".nombre").textContent  = prediccion[i].className;
     filas[i].querySelector(".relleno").style.width = pct.toFixed(1) + "%";
     filas[i].querySelector(".pct").textContent     = pct.toFixed(0) + "%";
+  }
+}
+
+function manejarError(e) {
+  document.getElementById("setup").classList.remove("oculto");
+  const nombre = e && e.name;
+  const clave  = e && e.message;
+
+  if (clave === "ENLACE_INVALIDO") {
+    msg("Ese no parece un enlace de Teachable Machine. Revisa que lo hayas pegado completo.", true);
+  } else if (clave === "IMAGEN_ILEGIBLE") {
+    msg("No se pudo leer esa imagen. Prueba con un archivo JPG o PNG.", true);
+  } else if (nombre === "NotAllowedError") {
+    msg("Permiso de cámara denegado. Habilítalo en el candado de la barra de direcciones, o usa «Subir imagen».", true);
+  } else if (nombre === "NotFoundError") {
+    msg("No se encontró ninguna cámara. Puedes usar «Subir imagen».", true);
+  } else if (location.protocol !== "https:" && location.hostname !== "localhost") {
+    msg("La cámara requiere HTTPS. Abre esta página con https://", true);
+  } else {
+    msg("No fue posible continuar. Revisa el enlace y tu conexión. " + (clave || ""), true);
   }
 }
 </script>
